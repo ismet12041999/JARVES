@@ -1,0 +1,240 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS - Aşama 1</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; background:#0f1117; color:#eaeaea; }
+  h1 { color:#4da3ff; }
+  button { background:#4da3ff; color:#fff; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-size:15px; margin:6px 4px 6px 0; }
+  button:disabled { background:#555; cursor:not-allowed; }
+  textarea, input { width:100%; padding:8px; border-radius:6px; border:1px solid #444; background:#1c1f2a; color:#eaeaea; box-sizing:border-box; margin-top:6px; }
+  #log { white-space:pre-wrap; background:#1c1f2a; padding:12px; border-radius:6px; margin-top:10px; min-height:60px; font-size:14px; }
+  .card { background:#181b24; padding:16px; border-radius:10px; margin-bottom:16px; }
+  #status { font-weight:bold; }
+</style>
+</head>
+<body>
+
+<h1>🤖 JARVIS - Aşama 1</h1>
+<p>Bu sürüm sadece şunu kanıtlıyor: <b>Google Drive üzerinden hafıza kalıcılığı çalışıyor.</b> Bilgisayarı kapatıp başka birinden Google hesabınla girsen bile notların orada duruyor.</p>
+
+<div class="card">
+  <div id="status">Durum: Giriş yapılmadı</div>
+  <button id="loginBtn">Google ile Giriş Yap</button>
+</div>
+
+<div class="card" id="workArea" style="display:none;">
+  <h3>📁 Klasör Yapısı</h3>
+  <button id="setupBtn">JARVIS Klasörlerini Oluştur / Kontrol Et</button>
+
+  <h3>🧠 Kalıcı Not Testi</h3>
+  <textarea id="noteInput" rows="3" placeholder="Buraya bir not yaz..."></textarea>
+  <button id="saveBtn">Hafızaya Kaydet</button>
+  <button id="loadBtn">Hafızadan Yükle</button>
+</div>
+
+<div class="card">
+  <h3>📜 Kayıt (Log)</h3>
+  <div id="log">Hazır bekleniyor...</div>
+</div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+const CLIENT_ID = "991987630312-ep602jl1rq640s0pmkinmnsoen0ds8b5.apps.googleusercontent.com";
+const SCOPES = "https://www.googleapis.com/auth/drive.file";
+
+let accessToken = null;
+let folderIds = {};
+
+function log(msg) {
+  const el = document.getElementById("log");
+  const time = new Date().toLocaleTimeString();
+  el.textContent = `[${time}] ${msg}\n` + el.textContent;
+}
+
+function setStatus(text) {
+  document.getElementById("status").textContent = "Durum: " + text;
+}
+
+let tokenClient = null;
+const loginBtn = document.getElementById("loginBtn");
+loginBtn.disabled = true;
+loginBtn.textContent = "Yükleniyor...";
+
+function initGoogle() {
+  if (typeof google === "undefined" || !google.accounts) {
+    log("HATA: Google giriş betiği (gsi/client) yüklenemedi. İnternet kafenin ağı veya bir eklenti (reklam engelleyici) bunu engelliyor olabilir. Sayfayı yenile (F5) ve bekle.");
+    loginBtn.textContent = "Kullanılamıyor";
+    return;
+  }
+  try {
+    tokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: CLIENT_ID,
+      scope: SCOPES,
+      callback: (resp) => {
+        if (resp.error) {
+          log("Giriş hatası: " + JSON.stringify(resp));
+          return;
+        }
+        accessToken = resp.access_token;
+        setStatus("Giriş yapıldı ✅");
+        document.getElementById("workArea").style.display = "block";
+        log("Google girişi başarılı.");
+      }
+    });
+    loginBtn.disabled = false;
+    loginBtn.textContent = "Google ile Giriş Yap";
+    log("Google giriş sistemi hazır. Şimdi butona basabilirsin.");
+  } catch (e) {
+    log("HATA (initTokenClient): " + e.message);
+    loginBtn.textContent = "Kullanılamıyor";
+  }
+}
+
+window.addEventListener("load", () => {
+  let tries = 0;
+  let warned = false;
+  const check = setInterval(() => {
+    tries++;
+    if (typeof google !== "undefined" && google.accounts) {
+      clearInterval(check);
+      initGoogle();
+    } else if (tries === 40 && !warned) {
+      warned = true;
+      log("Google giriş betiği hâlâ yükleniyor (ağ yavaş olabilir), beklemeye devam ediliyor...");
+    } else if (tries === 400) {
+      clearInterval(check);
+      log("HATA: 100 saniye geçti, script hiç yüklenmedi. Sayfayı yenile (F5) veya farklı bir ağ/bilgisayar dene.");
+      loginBtn.textContent = "Kullanılamıyor";
+    }
+  }, 250);
+});
+
+loginBtn.onclick = () => {
+  if (!tokenClient) {
+    log("Giriş sistemi henüz hazır değil, birkaç saniye bekleyip tekrar dene.");
+    return;
+  }
+  tokenClient.requestAccessToken();
+};
+
+async function driveFetch(url, options = {}) {
+  options.headers = Object.assign({}, options.headers, {
+    "Authorization": "Bearer " + accessToken
+  });
+  const res = await fetch(url, options);
+  if (!res.ok) {
+    const errText = await res.text();
+    throw new Error(`Drive API hatası (${res.status}): ${errText}`);
+  }
+  return res.json();
+}
+
+async function findOrCreateFolder(name, parentId) {
+  let q = `name='${name}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  if (parentId) q += ` and '${parentId}' in parents`;
+  const searchUrl = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`;
+  const result = await driveFetch(searchUrl);
+
+  if (result.files && result.files.length > 0) {
+    log(`Klasör bulundu: ${name}`);
+    return result.files[0].id;
+  }
+
+  const metadata = {
+    name: name,
+    mimeType: "application/vnd.google-apps.folder"
+  };
+  if (parentId) metadata.parents = [parentId];
+
+  const created = await driveFetch("https://www.googleapis.com/drive/v3/files", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(metadata)
+  });
+  log(`Klasör oluşturuldu: ${name}`);
+  return created.id;
+}
+
+document.getElementById("setupBtn").onclick = async () => {
+  try {
+    log("Klasör yapısı kontrol ediliyor...");
+    const jarvisId = await findOrCreateFolder("JARVIS", null);
+    folderIds.JARVIS = jarvisId;
+    for (const sub of ["Hafıza", "Bilgi", "Projeler", "Sistem"]) {
+      folderIds[sub] = await findOrCreateFolder(sub, jarvisId);
+    }
+    log("Tüm klasörler hazır: " + JSON.stringify(folderIds));
+  } catch (e) {
+    log("HATA: " + e.message);
+  }
+};
+
+async function findMemoryFile() {
+  const q = `name='hafiza.json' and '${folderIds["Hafıza"]}' in parents and trashed=false`;
+  const url = `https://www.googleapis.com/drive/v3/files?q=${encodeURIComponent(q)}&fields=files(id,name)`;
+  const result = await driveFetch(url);
+  return (result.files && result.files.length > 0) ? result.files[0].id : null;
+}
+
+document.getElementById("saveBtn").onclick = async () => {
+  try {
+    if (!folderIds["Hafıza"]) {
+      log("Önce 'JARVIS Klasörlerini Oluştur' butonuna bas.");
+      return;
+    }
+    const note = document.getElementById("noteInput").value;
+    let existing = [];
+    const existingId = await findMemoryFile();
+    if (existingId) {
+      const fileData = await driveFetch(`https://www.googleapis.com/drive/v3/files/${existingId}?alt=media`);
+      existing = Array.isArray(fileData) ? fileData : [];
+    }
+    existing.push({ text: note, date: new Date().toISOString() });
+
+    const boundary = "jarvis_boundary";
+    const metadata = existingId ? {} : { name: "hafiza.json", parents: [folderIds["Hafıza"]] };
+    const body =
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+      `--${boundary}\r\nContent-Type: application/json\r\n\r\n${JSON.stringify(existing)}\r\n` +
+      `--${boundary}--`;
+
+    const url = existingId
+      ? `https://www.googleapis.com/upload/drive/v3/files/${existingId}?uploadType=multipart`
+      : `https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart`;
+    const method = existingId ? "PATCH" : "POST";
+
+    await driveFetch(url, {
+      method,
+      headers: { "Content-Type": `multipart/related; boundary=${boundary}` },
+      body
+    });
+    log("Not Drive'a kaydedildi ✅ (hafiza.json)");
+    document.getElementById("noteInput").value = "";
+  } catch (e) {
+    log("HATA: " + e.message);
+  }
+};
+
+document.getElementById("loadBtn").onclick = async () => {
+  try {
+    if (!folderIds["Hafıza"]) {
+      log("Önce 'JARVIS Klasörlerini Oluştur' butonuna bas.");
+      return;
+    }
+    const existingId = await findMemoryFile();
+    if (!existingId) {
+      log("Henüz kayıtlı not yok.");
+      return;
+    }
+    const fileData = await driveFetch(`https://www.googleapis.com/drive/v3/files/${existingId}?alt=media`);
+    log("Kayıtlı notlar:\n" + JSON.stringify(fileData, null, 2));
+  } catch (e) {
+    log("HATA: " + e.message);
+  }
+};
+</script>
+</body>
+</html>
