@@ -1,3 +1,23 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>JARVIS - Aşama 1</title>
+<style>
+  body { font-family: Arial, sans-serif; max-width: 700px; margin: 40px auto; padding: 0 20px; background:#0f1117; color:#eaeaea; }
+  h1 { color:#4da3ff; }
+  button { background:#4da3ff; color:#fff; border:none; padding:10px 18px; border-radius:6px; cursor:pointer; font-size:15px; margin:6px 4px 6px 0; }
+  button:disabled { background:#555; cursor:not-allowed; }
+  textarea, input { width:100%; padding:8px; border-radius:6px; border:1px solid #444; background:#1c1f2a; color:#eaeaea; box-sizing:border-box; margin-top:6px; }
+  #log { white-space:pre-wrap; background:#1c1f2a; padding:12px; border-radius:6px; margin-top:10px; min-height:60px; font-size:14px; }
+  .card { background:#181b24; padding:16px; border-radius:10px; margin-bottom:16px; }
+  #status { font-weight:bold; }
+</style>
+</head>
+<body>
+
+<h1>🤖 JARVIS - Aşama 1</h1>
 <p>Bu sürüm sadece şunu kanıtlıyor: <b>Google Drive üzerinden hafıza kalıcılığı çalışıyor.</b> Bilgisayarı kapatıp başka birinden Google hesabınla girsen bile notların orada duruyor.</p>
 
 <div class="card">
@@ -20,6 +40,10 @@
   <div id="chatBox" style="max-height:300px; overflow-y:auto; background:#0f1117; padding:10px; border-radius:6px; margin-bottom:8px;"></div>
   <textarea id="chatInput" rows="2" placeholder="JARVIS'e bir şey sor..."></textarea>
   <button id="chatSendBtn">Gönder</button>
+  <button id="micBtn">🎤 Konuş</button>
+  <label style="display:inline-flex; align-items:center; gap:6px; margin-left:8px; font-size:14px;">
+    <input type="checkbox" id="voiceReplyCheck" checked style="width:auto; margin:0;"> Sesli cevap
+  </label>
 </div>
 
 <div class="card">
@@ -31,7 +55,7 @@
 <script>
 const CLIENT_ID = "991987630312-ep602jl1rq640s0pmkinmnsoen0ds8b5.apps.googleusercontent.com";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
-const GEMINI_API_KEY = "AQ.Ab8RN6JENX4v4hvd0lOIaCwmibjxgWYt_sBGmeEsLKOsdLS9Rg";
+const GEMINI_API_KEY = "AQ.Ab8RN6JxUMr7JvObwyYJPUbm1ycuKrqS9DNcKHKdmiSGNupfcw";
 
 let accessToken = null;
 let folderIds = {};
@@ -53,7 +77,7 @@ loginBtn.textContent = "Yükleniyor...";
 
 function initGoogle() {
   if (typeof google === "undefined" || !google.accounts) {
-    log("HATA: Google giriş betiği (gsi/client) yüklenemedi. İnternet kafenin ağı veya bir eklenti (reklam engelleyici) bunu engelliyor olabilir. Sayfayı yenile (F5) ve bekle.");
+    log("HATA: Google giriş betiği yüklenemedi. Sayfayı yenile (F5) ve bekle.");
     loginBtn.textContent = "Kullanılamıyor";
     return;
   }
@@ -286,6 +310,9 @@ async function sendChatMessage() {
     chatHistory.push({ role: "model", parts: [{ text: reply }] });
     addChatBubble("model", reply);
     log("Sohbet mesajı gönderildi ve cevap alındı.");
+    if (document.getElementById("voiceReplyCheck").checked) {
+      speakText(reply);
+    }
   } catch (e) {
     log("HATA: " + e.message);
     addChatBubble("model", "Bir hata oldu, log kutusuna bak.");
@@ -302,6 +329,72 @@ chatInput.addEventListener("keydown", (e) => {
     sendChatMessage();
   }
 });
+
+const micBtn = document.getElementById("micBtn");
+const SpeechRecognitionClass = window.SpeechRecognition || window.webkitSpeechRecognition;
+let recognition = null;
+let isListening = false;
+
+if (!SpeechRecognitionClass) {
+  micBtn.disabled = true;
+  micBtn.textContent = "🎤 Bu tarayıcı desteklemiyor";
+  log("Bu tarayıcı mikrofon ile konuşmayı desteklemiyor. Chrome kullanmayı dene.");
+} else {
+  recognition = new SpeechRecognitionClass();
+  recognition.lang = "tr-TR";
+  recognition.interimResults = false;
+  recognition.maxAlternatives = 1;
+
+  recognition.onstart = () => {
+    isListening = true;
+    micBtn.textContent = "🔴 Dinliyor...";
+    log("Mikrofon dinlemeye başladı, konuşabilirsin.");
+  };
+
+  recognition.onerror = (event) => {
+    log("HATA (mikrofon): " + event.error + " — Tarayıcı mikrofon iznini engellemiş olabilir.");
+  };
+
+  recognition.onend = () => {
+    isListening = false;
+    micBtn.textContent = "🎤 Konuş";
+  };
+
+  recognition.onresult = (event) => {
+    const transcript = event.results[0][0].transcript;
+    chatInput.value = transcript;
+    log("Duyulan: " + transcript);
+    sendChatMessage();
+  };
+
+  micBtn.onclick = () => {
+    if (isListening) {
+      recognition.stop();
+    } else {
+      try {
+        recognition.start();
+      } catch (e) {
+        log("HATA: Mikrofon başlatılamadı: " + e.message);
+      }
+    }
+  };
+}
+
+function speakText(text) {
+  if (!("speechSynthesis" in window)) {
+    log("Bu tarayıcı sesli okumayı desteklemiyor.");
+    return;
+  }
+  window.speechSynthesis.cancel();
+  const utterance = new SpeechSynthesisUtterance(text);
+  utterance.lang = "tr-TR";
+
+  const voices = window.speechSynthesis.getVoices();
+  const trVoice = voices.find(v => v.lang && v.lang.startsWith("tr"));
+  if (trVoice) utterance.voice = trVoice;
+
+  window.speechSynthesis.speak(utterance);
+}
 </script>
 </body>
-</
+</html>
