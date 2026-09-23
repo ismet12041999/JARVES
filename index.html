@@ -55,7 +55,7 @@
 <script>
 const CLIENT_ID = "991987630312-ep602jl1rq640s0pmkinmnsoen0ds8b5.apps.googleusercontent.com";
 const SCOPES = "https://www.googleapis.com/auth/drive.file";
-const GEMINI_API_KEY = "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";
+const GROQ_API_KEY = "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";
 
 let accessToken = null;
 let folderIds = {};
@@ -282,32 +282,33 @@ async function sendChatMessage() {
   const text = chatInput.value.trim();
   if (!text) return;
 
-  if (GEMINI_API_KEY.includes("BURAYA_GEMINI_API_KEY")) {
-    log("HATA: GEMINI_API_KEY hâlâ yer tutucu durumda.");
-    return;
-  }
-
   addChatBubble("user", text);
   chatInput.value = "";
   chatSendBtn.disabled = true;
   chatSendBtn.textContent = "Düşünüyor...";
 
-  chatHistory.push({ role: "user", parts: [{ text }] });
+  chatHistory.push({ role: "user", content: text });
 
   try {
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent`;
+    const url = "https://api.groq.com/openai/v1/chat/completions";
     const res = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": GEMINI_API_KEY },
-      body: JSON.stringify({ contents: chatHistory })
+      headers: {
+        "Content-Type": "application/json",
+        "Authorization": "Bearer " + GROQ_API_KEY
+      },
+      body: JSON.stringify({
+        model: "llama-3.3-70b-versatile",
+        messages: chatHistory
+      })
     });
     if (!res.ok) {
       const errText = await res.text();
-      throw new Error(`Gemini API hatası (${res.status}): ${errText}`);
+      throw new Error(`Groq API hatası (${res.status}): ${errText}`);
     }
     const data = await res.json();
-    const reply = data.candidates?.[0]?.content?.parts?.[0]?.text || "(Cevap alınamadı)";
-    chatHistory.push({ role: "model", parts: [{ text: reply }] });
+    const reply = data.choices?.[0]?.message?.content || "(Cevap alınamadı)";
+    chatHistory.push({ role: "assistant", content: reply });
     addChatBubble("model", reply);
     log("Sohbet mesajı gönderildi ve cevap alındı.");
     if (document.getElementById("voiceReplyCheck").checked) {
